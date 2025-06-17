@@ -334,6 +334,12 @@ class Leistungsnachweis:
                 print(tabulate(table, headers=["", "Note"], tablefmt="orgtbl"))
             except:
                 print("Es ist ein Fehler aufgetreten. Zuerst Noten setzen.")
+    def print_grades(self, sort = "Index"):
+        t = self.points.drop("Name", axis=1)
+        if sort == "Index":
+            print(tabulate(t.sort_index(), tablefmt = "orgtbl", headers= t.keys()))
+        else:
+            print(tabulate(t.sort_values(by=sort), tablefmt = "orgtbl", headers= t.keys()))
 
 
 class EinfacheNote(Leistungsnachweis):
