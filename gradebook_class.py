@@ -28,7 +28,11 @@ def convname(s):
 
 
 def round_to_multiple(x, multiple):
-    return multiple*round(x/multiple)
+    try:
+        return multiple*round(x/multiple)
+    except:
+        print("Some grades could not be calculated (missing grades?)")
+        return x 
 
 
 def standard_marking_scale(points, points_4, points_6):
@@ -236,37 +240,6 @@ class Leistungsnachweis:
         print(tabulate(self.info, tablefmt="orgtbl",
               headers=[self.info.index.name]+list(self.info.keys())))
 
-    def print_stats(self, option="grades"):
-        if option in ["points", "all"]:
-            try:
-                table = [["Punkte", self.info["max_Punkte"].agg("sum")],
-                         ["max erreichte Punkte", round(
-                             self.points["Summe"].agg("max"), 1)],
-                         ["min erreichte Punkte", round(
-                             self.points["Summe"].agg("min"), 1)],
-                         ["mittlere Punktzahl", round(
-                             self.points["Summe"].agg("mean"), 1)],
-                         ["Median der Punkte", round(
-                             self.points["Summe"].agg("median"), 1)],
-                         ["Standardabw. Punkte", round(self.points["Summe"].agg("std"), 1)]]
-                print(tabulate(table, headers=[
-                      "", "Punkte"], tablefmt="orgtbl"))
-            except:
-                print("Fehler. Punktetabelle vorhanden?")
-
-        if option in ["grades", "all"]:
-            try:
-                table = [["Max", round(self.points["Note"].agg("max"), 1)],
-                         ["Min", round(self.points["Note"].agg("min"), 1)],
-                         ["Durchschnitt", round(
-                             self.points["Note"].agg("mean"), 1)],
-                         ["Median", round(
-                             self.points["Note"].agg("median"), 1)],
-                         ["Standardabw.", round(self.points["Note"].agg("std"), 1)]]
-                print(tabulate(table, headers=["", "Note"], tablefmt="orgtbl"))
-            except:
-                print("Es ist ein Fehler aufgetreten. Zuerst Noten setzen.")
-
     def sum_points(self):
         t = self.points.drop(
             ["Name", "Vorname", "Nachname", "EMail"], axis=1, errors="ignore")
@@ -362,12 +335,6 @@ class Leistungsnachweis:
             except:
                 print("Es ist ein Fehler aufgetreten. Zuerst Noten setzen.")
 
-    def print_grades(self, sort = "Index"):
-        t = self.points.drop("Name", axis=1)
-        if sort == "Index":
-            print(tabulate(t.sort_index(), tablefmt = "orgtbl", headers= t.keys()))
-        else:
-            print(tabulate(t.sort_values(by=sort), tablefmt = "orgtbl", headers= t.keys()))
 
 class EinfacheNote(Leistungsnachweis):
     """
@@ -537,13 +504,11 @@ class Classtime(Leistungsnachweis):
     def _extract_to_info_df(self):
         # extract meta infos from complete table
         df_info = self._data.iloc[[0, 3], 1:].transpose()
-        # df_info = self._data.drop(
-        #     index=[1, 2]+list(range(4, len(self._data))), axis=0)
-        # df_info.rename(
-        #     columns={df_info.columns[0]: "Bezeichnung"}, inplace=True)
-        # df_info["Bezeichnung"] = ["Fragentyp", "max_Punkte"]
-        # df_info.set_index("Bezeichnung", inplace=True)
-        # # reg exp to find date string in first row
+        # reg exp to find date string in first row
+        # doesn't seem to work on new machine (fedora), maybe different handling of importer
+        # longlabel is hidden in comments in the spreadsheet
+        # -> in Index there is not hint of the comments on the fedora machine, whereas
+        # on the old ubuntu the index is a combination of the comment and the cell!
         df_info.rename(columns={0: "Fragentyp", 3: "max_Punkte"}, inplace=True)
         shortlabels = [x[x.rfind("Q"):] for x in df_info.index]
         p = re.compile(
@@ -551,7 +516,7 @@ class Classtime(Leistungsnachweis):
         try:
             longlabels = [x[p.match(x).end():x.rfind("Q")] for x in df_info.index]
         except:
-            print("Error extracting longlabels. Using shortlabels")
+            print("Info: Titel der Aufgaben konnte nicht gelesen werden. Setze Kurztitel ebenfalls auf Titel")
             longlabels = shortlabels
         df_info["Frage"] = shortlabels
         df_info.set_index("Frage", inplace=True)
@@ -601,8 +566,8 @@ class MoodleTest(Leistungsnachweis):
                 return s
         df_points.rename(inplace=True, columns=temp_name_replace)
         # extract only infos about points achieved in each exercise
-        df_points.drop(columns=["Status", "Begonnen am",
-                                "Beendet", "Verbrauchte Zeit", "Bewertung"], inplace=True)
+        df_points.drop(columns=["Status", "Begonnen",
+                                "Beendet", "Dauer", "Bewertung"], inplace=True)
         # rename E-Mail-Adresse
         df_points.rename(columns={"E-Mail-Adresse": "EMail"}, inplace=True)
         # add a column with Name, Vorname (necessary?)
