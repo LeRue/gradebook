@@ -28,7 +28,10 @@ def convname(s):
 
 
 def round_to_multiple(x, multiple):
-    return multiple*round(x/multiple)
+    try:
+        return multiple*round(x/multiple)
+    except Exception:
+        return numpy.nan
 
 
 def standard_marking_scale(points, points_4, points_6):
@@ -136,10 +139,10 @@ class Notenbuch:
         "Full" also shows EMail and both name variants.
         """
         if mode == "simple":
-            if not sortby == "Name":
+            if sortby in ["Nachname", "Vorname"]:
                 print("In mode \"simple\" you can only sort by full names")
                 return -1
-            return self.overview.drop(columns=["Nachname", "Vorname", "EMail"]).sort_values(by="Name")
+            return self.overview.drop(columns=["Nachname", "Vorname", "EMail"]).sort_values(by=sortby)
         if mode == "names":
             if sortby == "Name":
                 sortby = "Nachname"
@@ -190,7 +193,7 @@ class Notenbuch:
             return -1
         else:
             self.overview["Note"] = self.overview["Schnitt"].apply(
-                lambda x: round_to_multiple(x, 0.5))
+                    lambda x: round_to_multiple(x, 0.5))
 
 
 class Leistungsnachweis:
