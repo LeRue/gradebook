@@ -205,12 +205,22 @@ class Leistungsnachweis:
         self.scale_params = {}
 
     def get_shortname(self):
-        p = re.compile('[a-zA-Züäüö]*[1-9]')
-        m = p.match(self.title.replace(" ", ""))
-        str_to_return = self.title[0]+self.title.replace(" ", "")[m.end()-1]
-        if self.title.find("NT") != -1:
-            str_to_return += "_NT"
-        return str_to_return
+        first_char = self.title[0]
+        number_match = re.search(r"\d+", self.title)
+        number = number_match.group() if number_match else ""
+        shortname = first_char + number
+        if "NT" in self.title:
+            shortname += "_NT"
+        return shortname
+
+    # def get_shortname(self):
+    #     match = re.match( r'[a-zA-Züäüö]+(\d+)' )
+    #     p = re.compile('[a-zA-Züäüö]*[1-9]?')
+    #     m = p.match(self.title.replace(" ", ""))
+    #     str_to_return = self.title[0]+self.title.replace(" ", "")[m.end()-1]
+    #     if self.title.find("NT") != -1:
+    #         str_to_return += "_NT"
+    #     return str_to_return
 
     def get_marks(self):
         try:
@@ -585,8 +595,7 @@ class MoodleTest(Leistungsnachweis):
 
     def _extract_to_info_df(self):
         # extract meta infos from complete table
-        p = re.compile(
-            'F\s[0-9]+\s')
+        p = re.compile(r'F\s[0-9]+\s')
         labels = [s.split("/")[0].replace(" ", "")
                   for s in self._data.columns if not p.match(s) == None]
         points = [float(s.split("/")[1].replace(" ", ""))
