@@ -195,31 +195,45 @@ class Notenbuch:
             self.overview["Note"] = self.overview["Schnitt"].apply(
                     lambda x: round_to_multiple(x, 0.5))
 
+    def vary_grade(self):
+        """
+        Function varies one grade to check what
+        the range for a given final grade
+        """
+
+
+
 
 class Leistungsnachweis:
-    def __init__(self, path, title):
+    def __init__(self, path, title, shortname=None):
         self.title = title
+        self.shortname = shortname if shortname else self.create_shortname()
         self.path = path
         self.notes = {}
         self.scale_params = {}
 
     def get_shortname(self):
-        first_char = self.title[0]
-        number_match = re.search(r"\d+", self.title)
-        number = number_match.group() if number_match else ""
-        shortname = first_char + number
-        if "NT" in self.title:
-            shortname += "_NT"
-        return shortname
+        return self.shortname
 
-    # def get_shortname(self):
-    #     match = re.match( r'[a-zA-Züäüö]+(\d+)' )
-    #     p = re.compile('[a-zA-Züäüö]*[1-9]?')
-    #     m = p.match(self.title.replace(" ", ""))
-    #     str_to_return = self.title[0]+self.title.replace(" ", "")[m.end()-1]
-    #     if self.title.find("NT") != -1:
-    #         str_to_return += "_NT"
-    #     return str_to_return
+    def create_shortname(self):
+        number_match = re.search(r"\d+", self.title)
+        if "Prüfung" in self.title:
+            try:
+                shortname = "P" + number_match.group()
+                if "NT" in self.title or "Nachtermin" in self.title:
+                    shortname += "N"
+                if "NT2" in self.title or "Nachtermin 2" in self.title:
+                    shortname += "N2"
+                return shortname
+            except:
+                print(f"No number found in {self.title}, check title!")
+        if "Unterrichtsnote" in self.title:
+            try:
+                shortname = "U" + number_match.group()
+                return shortname
+            except:
+                print(f"No number found in {self.title}, check title!")
+
 
     def get_marks(self):
         try:
@@ -364,8 +378,8 @@ class EinfacheNote(Leistungsnachweis):
 
     """
 
-    def __init__(self, path, title):
-        super().__init__(path, title)
+    def __init__(self, path, title, shortname=None):
+        super().__init__(path, title, shortname=shortname)
         self._data = self._import_raw_data()
         self.points = self._extract_to_points_df()
         self.clean_data()
@@ -400,8 +414,8 @@ class EinfacheNote(Leistungsnachweis):
 
 
 class Pruefung(Leistungsnachweis):
-    def __init__(self, path, title):
-        super().__init__(path, title)
+    def __init__(self, path, title, shortname=None):
+        super().__init__(path, title, shortname=shortname)
         self._data = self._import_raw_data()
         self.points = self._extract_to_points_df()
         self.clean_data()
@@ -460,8 +474,8 @@ class Pruefung(Leistungsnachweis):
 
 
 class Classtime(Leistungsnachweis):
-    def __init__(self, path, title):
-        super().__init__(path, title)
+    def __init__(self, path, title, shortname=None):
+        super().__init__(path, title, shortname=shortname)
         self.path = path
         self._data = self._import_raw_data()
         self.points = self._extract_to_points_df()
@@ -543,8 +557,8 @@ class Classtime(Leistungsnachweis):
 
 
 class MoodleTest(Leistungsnachweis):
-    def __init__(self, path, title):
-        super().__init__(path, title)
+    def __init__(self, path, title, shortname=None):
+        super().__init__(path, title, shortname=shortname)
         self.path = path
         self._data = self._import_raw_data()
         self.points = self._extract_to_points_df()
