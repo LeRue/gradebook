@@ -88,7 +88,7 @@ class Notenbuch:
         self.title = title
         self.grades = []
         self.weights = []
-        self.roster = -1
+        self.roster = None
 
     def add(self, ln):
         if isinstance(ln, Leistungsnachweis):
@@ -105,10 +105,19 @@ class Notenbuch:
         self.roster = df
 
     def merge_grades(self, method="stdout"):
-        """ Merge grades in book
-
         """
+        Merge grades in gradebook
 
+        This takes all the grades that have been added to the gradebook
+        and merges them to a single dataframe.
+        In this process thefuzz is used to associate
+        the roster names with the names of single grades.
+
+        Be careful and check the resulting merge.
+        """
+        if not hasattr(self, "roster") or self.roster.empty:
+            print("Load roster before merging grades!")
+            return
         from thefuzz import process, fuzz
         frames = [x.points[["Name", "Note"]].rename(
             {"Note": x.get_shortname()}, axis=1) for x in self.grades]
@@ -152,9 +161,69 @@ class Notenbuch:
             return self.overview.sort_values(by=sortby)
 
     def set_weights(self, weights):
+        """
+        Set weights as a list of dictionaries.
+        Structure:
+        [
+            {
+                "label": "Exams",          # Display name (optional)
+                "weight": 0.60,            # Total weight of this group
+                "items": ["P1", "P1N", ...], # List of column names (shortnames)
+                "type": "mean"             # Aggregation type: 'mean' (default), 'sum', etc.
+            },
+            ...
+        ]
+        """
         self.merge_grades()
-        self.weights = pd.DataFrame(
-            weights, index=self.overview.drop(columns=["Name", "Vorname", "Nachname", "EMail"]).keys(), columns=["weights"])
+        # Validate configuration
+        total_weight = sum(g["weight"] for g in weights)
+        if abs(total_weight - 1.0) > 0.001:
+            print(f"Warning: Total weight sums to {total_weight}, expected 1.0.")
+
+        self.weights = weights
+
+    def print_weights(self):
+        """
+        Print weights in readable org-table format.
+
+        Displays:
+        1. The Group Name
+        2. The Total Weight of the group
+        3. The Individual Items within that group
+        """
+        if not hasattr(self, 'weights') or not self.weights:
+            print("No weights configured yet. Use set_weights() first.")
+            return
+
+        table_data = []
+
+        # Header for the table
+        headers = ["Gruppe", "Gewichtung", "Items"]
+
+        total_check = 0.0
+
+        for i, group in enumerate(self.weights, 1):
+            label = group.get("label", f"Gruppe {i}") # second value is fallback value
+            g_weight = group["weight"]
+            items = group["items"]
+
+            total_check += g_weight
+
+            # Format items as a comma-separated string for the table cell
+            items_str = ", ".join(items)
+
+            # Format weights nicely (e.g., 0.6 -> 60%)
+            g_str = f"{g_weight:.1%}"
+
+            table_data.append([label, g_str, items_str])
+
+        # Add a summary row if weights sum to 1.0, otherwise warn
+        if not abs(total_check - 1.0) < 0.001:
+            print(f"\n⚠️ Warning: Total weight sums to {total_check:.2%}, expected 100%.\n")
+
+        # Print using tabulate with orgtbl format
+        print(tabulate(table_data, headers=headers, tablefmt="orgtbl"))
+
 
     def weighted_average(self, vals):
         eff_sum_of_weights = sum(w for (x, w) in zip(
@@ -164,8 +233,12 @@ class Notenbuch:
         return eff_sum/eff_sum_of_weights
 
     def auto_calc_grade(self):
+        if not hasattr(self, "overview") or not self.overview or not self.roster:
+            print("Load roster and merge grades first!")
+            return
         if "Schnitt" in self.overview.keys():
             print("Grade has been already calculated")
+            # recalculate by remerging?
             while True:
                 tf = input("Recalculate grades? (y/n)")
                 if tf == "n":
@@ -176,15 +249,50 @@ class Notenbuch:
                 elif tf == "y":
                     self.merge_grades()
                     break
-        if len(self.weights) == 0:
-            print("No weights set. Calculating simple average")
-            self.overview["Schnitt"] = round(self.overview.drop(
-                columns=["Nachname", "Vorname", "Name", "EMail"]).mean(axis=1), 2)
 
+        # Check if custom weights are set
+        if not hasattr(self, 'weights') or not self.weights:
+            # Fallback to simple average as before
+            print("No weighted groups set. Calculating simple average of all available columns.")
+            grade_cols = self.overview.drop(columns=["Nachname", "Vorname", "Name", "EMail"]).columns
+            self.overview["Schnitt"] = round(self.overview[grade_cols].mean(axis=1), 2)
+            self.calc_final_grade()
+            return
+
+        # Calculate Grouped Weighted Average
+        grouped_avgs = []
+
+        for group in self.weights:
+            items = group["items"]
+            weight = group["weight"]
+
+            # Verify items exist in the dataframe overview
+            missing_items = [item for item in items if item not in self.overview.columns]
+            if missing_items:
+                print(f"Warning in group '{group.get('label', 'Unnamed')}': Columns {missing_items} not found. Skipping.")
+                continue
+
+            if len(items) == 0:
+                continue
+
+            # Calculate the mean for this group for every row
+            # Pandas mean() automatically skips NaNs, which handles absent exams gracefully
+            group_mean = self.overview[items].mean(axis=1)
+
+            # Apply weight
+            weighted_score = group_mean * weight
+            grouped_avgs.append(weighted_score)
+
+        # Sum up all weighted group scores
+        if grouped_avgs:
+            final_score = sum(grouped_avgs)
+            # Round to 2 decimal places (or whatever precision you prefer)
+            self.overview["Schnitt"] = round(final_score, 2)
         else:
-            # apply a weighing function to a combination of columns
-            self.overview["Schnitt"] = round(self.overview.apply(lambda x: self.weighted_average(
-                [x[col] for col in self.overview.drop(columns=["Nachname", "Vorname", "Name", "EMail"]).keys()]), axis=1), 2)
+            print("No valid groups found to calculaodese grade.")
+            return
+
+        self.calc_final_grade()
 
     def calc_final_grade(self):
         if not "Schnitt" in self.overview.keys():
@@ -195,11 +303,220 @@ class Notenbuch:
             self.overview["Note"] = self.overview["Schnitt"].apply(
                     lambda x: round_to_multiple(x, 0.5))
 
-    def vary_grade(self):
+    # AI copy (lumo) -> this still needs cleaning up manually!!!
+    def vary_grade(self, student_idx=None, item_name=None, tolerance=0.0):
         """
-        Function varies one grade to check what
-        the range for a given final grade
+        Vary one grade to check the interval that results in the same final grade.
+
+        Parameters:
+        - student_idx: Index of the student in self.overview (1-based as per your index logic).
+                       If None, prompts user.
+        - item_name: Name of the column (shortname) to vary.
+                     If None, prompts user.
+        - tolerance: How much deviation from the exact final grade is allowed before
+                     triggering a new grade category? Default is 0.0 (strict).
+
+        Returns:
+        - Prints the min/max points for that item and the resulting grade range.
         """
+        # 1. Ensure we have calculated grades
+        if "Schnitt" not in self.overview.columns:
+            print("⚠️ No 'Schnitt' calculated yet. Run auto_calc_grade() first.")
+            return
+
+        # 2. Identify Student
+        if student_idx is None:
+            print("\nAvailable Students:")
+            print(tabulate(self.overview[["Name", "Nachname"]], tablefmt="orgtbl"))
+            try:
+                idx = int(input("\nEnter student index (or -1 to cancel): "))
+            except ValueError:
+                print("Invalid input.")
+                return
+            if idx == -1: return
+        else:
+            idx = student_idx
+
+        if idx < 1 or idx > len(self.overview):
+            print(f"Invalid index. Range is 1-{len(self.overview)}")
+            return
+
+        row = self.overview.iloc[idx-1]
+        student_name = row["Name"]
+        current_final_score = row["Schnitt"]
+
+        # What is the *target* final grade they currently hold?
+        # We need to know if they are on the edge of a 0.5 step.
+        # e.g. if Schnitt is 4.54 -> Final Grade is 4.5.
+        # We want to keep the final rounded grade constant.
+
+        # Re-calculate the final grade based on current Schnitt to find the target bin
+        target_grade = round_to_multiple(current_final_score, 0.5)
+
+        print(f"\nTarget Student: {student_name}")
+        print(f"Current Weighted Average (Schnitt): {current_final_score:.2f}")
+        print(f"Current Final Grade (rounded to 0.5): {target_grade}")
+        print("-" * 40)
+
+        # 3. Identify Item
+        available_items = [c for c in self.overview.columns if c not in ["Name", "Nachname", "Vorname", "EMail", "Schnitt", "Note"]]
+        if not available_items:
+            print("No graded items found.")
+            return
+
+        if item_name is None:
+            print("\nAvailable Items:")
+            print("\n".join(available_items))
+            try:
+                item_name = input("Enter item name to vary: ").strip()
+            except:
+                return
+
+        if item_name not in available_items:
+            print(f"Item '{item_name}' not found. Available: {available_items}")
+            return
+
+        current_item_score = row[item_name]
+        if pd.isna(current_item_score):
+            print(f"Student has no score recorded for '{item_name}'. Cannot vary.")
+            return
+
+        # 4. Find the Interval
+        # We will binary search (or iterate with small steps) to find the min and max
+        # score for this item that keeps the final rounded grade equal to 'target_grade'.
+
+        # Ask for step size, defaulting to 0.1 if input is empty
+        raw_step = input("Schrittweite für Variation? (Standard: 0.1) > ").strip()
+
+        try:
+            step = float(raw_step) if raw_step else 0.1
+        except ValueError:
+            print(f"⚠️ Ungültige Eingabe ('{raw_step}'). Setze auf Standard 0.1.")
+            step = 0.1
+
+        if step <= 0:
+            raise ValueError("Schrittweite muss positiv sein.")
+
+        # Lower Bound Search
+        # Start low, go up until we hit the target grade
+        min_val = 0.0
+        max_possible_points = 100.0 # Heuristic, could be dynamic if you store max points per item
+
+        # Let's assume a generic max of 100 or derive it from your info if stored
+        # For safety, let's just scan a reasonable range
+        lower_bound = None
+        upper_bound = None
+
+        # We scan from 0 to max_possible_points
+        # To be precise, we check if the resulting FINAL GRADE matches target_grade
+
+        def get_final_grand(score_change_val):
+            """Calculates final weighted average if we replace the item score with score_change_val"""
+            temp_scores = row[available_items].copy()
+            temp_scores[item_name] = score_change_val
+
+            if not hasattr(self, 'weights') or not self.weights:
+                # Simple average case (your fallback in auto_calc_grade)
+                return temp_scores.mean()
+
+            # Weighted case
+            grouped_avgs = []
+            total_weight = 0.0
+
+            for group in self.weights:
+                items = group["items"]
+                weight = group["weight"]
+
+                if item_name in items:
+                    # Only calculate mean for this group including our varied item
+                    # Note: This assumes other items in the group remain fixed
+                    group_vals = [temp_scores[i] for i in items if not pd.isna(temp_scores[i])]
+                    if not group_vals:
+                        group_avg = 0.0 # Or handle NaNs differently
+                    else:
+                        group_avg = sum(group_vals) / len(group_vals) # Standard mean
+
+                    weighted_score = group_avg * weight
+                    grouped_avgs.append(weighted_score)
+                    total_weight += weight
+                else:
+                    # Group doesn't contain the varied item
+                    # Recalculate group mean with original data
+                    orig_vals = row[items]
+                    valid_vals = [v for v in orig_vals if not pd.isna(v)]
+                    if not valid_vals:
+                        continue
+                    group_avg = sum(valid_vals) / len(valid_vals)
+                    grouped_avgs.append(group_avg * weight)
+                    total_weight += weight
+
+            if total_weight == 0: return 0.0
+            return sum(grouped_avgs) / total_weight # Normalize by actual weight used?
+            # Wait, your auto_calc_grade does: final_score = sum(grouped_avgs)
+            # where grouped_avgs already includes *weight*.
+            # So we just sum them. But if weights don't sum to 1.0 exactly due to missing items,
+            # the logic in auto_calc_grade just sums. Let's stick to the existing logic.
+            # In auto_calc_grade: final_score = sum(grouped_avgs).
+            # It does NOT divide by sum(weights). It assumes weights sum to 1.
+
+            return sum(grouped_avgs)
+
+        # Scan for bounds
+        # We need to find the range [min_s, max_s] where
+        # round_to_multiple(get_final_grand(s), 0.5) == target_grade
+
+        # Optimization: Binary search or linear scan with step
+        # Linear scan with 0.5 step is fast enough for a single query
+
+        possible_range_min = None
+        possible_range_max = None
+
+        # Define a safe upper bound for points (e.g., max points defined in your Pruefung class?)
+        # Since we don't have global max point config here, let's use a high number or infer from data
+        inferred_max = row[available_items].max() # Just looking at current max in class
+        # Better: Look at self.info if available? Not attached to Notebuch easily without more refactoring.
+        # Let's just go up to 100 or 150 safely.
+        scan_limit = 150.0
+
+        found_min = False
+        found_max = False
+
+        # Check downwards from current
+        s = current_item_score
+        while s >= 0:
+            sim_schnitt = get_final_grand(s)
+            sim_grade = round_to_multiple(sim_schnitt, 0.5)
+            if sim_grade == target_grade:
+                possible_range_min = s
+                s -= step # Keep going down
+            else:
+                break
+
+        # Check upwards
+        s = current_item_score
+        while s <= scan_limit:
+            sim_schnitt = get_final_grand(s)
+            sim_grade = round_to_multiple(sim_schnitt, 0.5)
+            if sim_grade == target_grade:
+                possible_range_max = s
+                s += step
+            else:
+                break
+
+        print(f"\nResult for Item: '{item_name}'")
+        print(f"Current Score: {current_item_score}")
+        print(f"Final Grade stays '{target_grade}' if the score is between:")
+        print(f"  Min: {possible_range_min} points")
+        print(f"  Max: {possible_range_max} points")
+
+        # Optional: Print the exact Schnitt values at boundaries
+        if possible_range_min is not None:
+            min_schnitt = get_final_grand(possible_range_min)
+            print(f"  At {possible_range_min}, Schnitt = {min_schnitt:.2f} -> Grade {round_to_multiple(min_schnitt, 0.5)}")
+
+        if possible_range_max is not None:
+            max_schnitt = get_final_grand(possible_range_max)
+            print(f"  At {possible_range_max}, Schnitt = {max_schnitt:.2f} -> Grade {round_to_multiple(max_schnitt, 0.5)}")
 
 
 
@@ -220,6 +537,16 @@ class Leistungsnachweis:
         if "Prüfung" in self.title:
             try:
                 shortname = "P" + number_match.group()
+                if "NT" in self.title or "Nachtermin" in self.title:
+                    shortname += "N"
+                if "NT2" in self.title or "Nachtermin 2" in self.title:
+                    shortname += "N2"
+                return shortname
+            except:
+                print(f"No number found in {self.title}, check title!")
+        if "Kurzprüfung" in self.title or "Kurztest" in self.title:
+            try:
+                shortname = "K" + number_match.group()
                 if "NT" in self.title or "Nachtermin" in self.title:
                     shortname += "N"
                 if "NT2" in self.title or "Nachtermin 2" in self.title:
