@@ -174,7 +174,6 @@ class Notenbuch:
             ...
         ]
         """
-        self.merge_grades()
         # Validate configuration
         total_weight = sum(g["weight"] for g in weights)
         if abs(total_weight - 1.0) > 0.001:
@@ -233,7 +232,7 @@ class Notenbuch:
         return eff_sum/eff_sum_of_weights
 
     def auto_calc_grade(self):
-        if not hasattr(self, "overview") or not self.overview or not self.roster:
+        if not hasattr(self, "overview") or self.overview is None or self.roster is None:
             print("Load roster and merge grades first!")
             return
         if "Schnitt" in self.overview.keys():
