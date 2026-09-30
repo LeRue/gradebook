@@ -174,7 +174,6 @@ class Notenbuch:
             ...
         ]
         """
-        self.merge_grades()
         # Validate configuration
         total_weight = sum(g["weight"] for g in weights)
         if abs(total_weight - 1.0) > 0.001:
