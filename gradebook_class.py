@@ -34,7 +34,7 @@ def round_to_multiple(x, multiple):
         return numpy.nan
 
 
-def standard_marking_scale(points, points_4, points_6):
+def standard_marking_scale(points, points_4, points_6, roundto=0.5):
     """ Returns mark given the points needed for a mark of 4 and 6, respectively.
 
     Note: The function first rounds to a multiple of 0.5
@@ -44,7 +44,7 @@ def standard_marking_scale(points, points_4, points_6):
     (all rounding are such that the "middle" is rounded up)
     """
     # round to half points
-    points = round_to_multiple(points, 0.5)
+    points = round_to_multiple(points, roundto)
     if points <= points_4:
         return round(round_to_multiple(1 + points/points_4*3, 0.1), ndigits=1)
     elif points > points_4:
@@ -57,7 +57,7 @@ def standard_marking_scale(points, points_4, points_6):
         return -1
 
 
-def triple_marking_scale(points, points_3, points_4, points_6):
+def triple_marking_scale(points, points_3, points_4, points_6, roundto=0.5):
     """ Returns mark given the points needed for a mark of 3, 4 and 6, respectively.
 
     Note: The function first rounds to a multiple of 0.5
@@ -68,7 +68,7 @@ def triple_marking_scale(points, points_3, points_4, points_6):
     """
 
     # round to half points
-    points = round_to_multiple(points, 0.5)
+    points = round_to_multiple(points, roundto)
     if points <= points_3:
         return round(round_to_multiple(1 + points/points_3*2, 0.1), ndigits=1)
     elif points <= points_4:
@@ -598,7 +598,8 @@ class Leistungsnachweis:
         else:
             self.points["Summe"] = t.sum(axis=1)
 
-    def set_marks(self, option="standard", params=[]):
+    def set_marks(self, option="standard", params=None, roundto=0.5):
+        self.roundto = roundto
         if option == "standard":
             try:
                 p4, p6 = params
@@ -606,7 +607,7 @@ class Leistungsnachweis:
                 self.scale_params["Punkte für Note 4"] = p4
                 self.scale_params["Punkte für Note 6"] = p6
                 self.points["Note"] = self.points["Summe"].apply(
-                    lambda x: standard_marking_scale(x, p4, p6))
+                    lambda x: standard_marking_scale(x, p4, p6, roundto=self.roundto))
             except:
                 print("Falsche Parameter für diese Notenskala:" + option)
 
@@ -618,13 +619,14 @@ class Leistungsnachweis:
                 self.scale_params["Punkte für Note 4"] = p4
                 self.scale_params["Punkte für Note 6"] = p6
                 self.points["Note"] = self.points["Summe"].apply(
-                    lambda x: triple_marking_scale(x, p3, p4, p6))
+                    lambda x: triple_marking_scale(x, p3, p4, p6, roundto=self.roundto))
             except:
                 print("Falsche Parameter für diese Notenskala:" + option)
         else:
             print("keine valide Option. Überprüfe die Schreibweise")
 
-    def print_gradescale(self, xmin=-1):
+    def print_gradescale(self, xmin=-1, cols_threshold=15, max_col_pairs=4):
+        step = self.roundto
         grades_list = []
         table = []
         if xmin == -1:
@@ -632,24 +634,80 @@ class Leistungsnachweis:
         else:
             x_l = xmin
         x_u = self.scale_params["Punkte für Note 6"]
-        pointslist = numpy.arange(x_l, x_u+.5, .5)
+        pointslist = numpy.arange(x_l, x_u+step, step)
+
+        # Tabelle aufbauen (wie bisher)
         if self.scale_params["Skalentyp"] == "standard":
             for x in pointslist:
                 table.append((str(x),
                               str(standard_marking_scale(x,
                                                          self.scale_params["Punkte für Note 4"],
-                                                         self.scale_params["Punkte für Note 6"]))))
-
+                                                         self.scale_params["Punkte für Note 6"], roundto=self.roundto))))
         elif self.scale_params["Skalentyp"] == "triple":
             for x in pointslist:
                 table.append((str(x),
                               str(triple_marking_scale(x,
                                                        self.scale_params["Punkte für Note 3"],
                                                        self.scale_params["Punkte für Note 4"],
-                                                       self.scale_params["Punkte für Note 6"]))))
+                                                       self.scale_params["Punkte für Note 6"], roundto=step))))
 
-        print(tabulate(table, headers=[
-              "Punkte", "Note"], tablefmt="orgtbl"))
+        # Prüfen ob Umbruch nötig ist
+        total_rows = len(table)
+        col_pairs_needed = (total_rows + cols_threshold - 1) // cols_threshold
+
+        if col_pairs_needed <= max_col_pairs:
+            # Mehrspaltiges Format erstellen
+            output_table = []
+            num_columns = min(col_pairs_needed, max_col_pairs)
+
+            # Daten nach Spalten verteilen
+            rows_per_col = (total_rows + num_columns - 1) // num_columns
+
+            for row_idx in range(rows_per_col):
+                row_data = []
+                for col_pair in range(num_columns):
+                    idx = col_pair * rows_per_col + row_idx
+                    if idx < total_rows:
+                        row_data.extend([table[idx][0], table[idx][1]])
+                    else:
+                        row_data.extend(["", ""])
+                output_table.append(tuple(row_data))
+
+            # Header anpassen
+            headers = ["Punkte", "Note"] * num_columns
+            print(tabulate(output_table, headers=headers, tablefmt="orgtbl", missingval=""))
+        else:
+            # Fallback: nur ein Spaltenpaar oder warnen
+            print(f"⚠️  {total_rows} Zeilen zu viel für {max_col_pairs} Spaltenpaare")
+            print(tabulate(table[:cols_threshold], headers=["Punkte", "Note"], tablefmt="orgtbl", col_space=4))
+
+#    def print_gradescale(self, xmin=-1):
+#        step = self.roundto
+#        grades_list = []
+#        table = []
+#        if xmin == -1:
+#            x_l = math.floor(self.points["Summe"].min())
+#        else:
+#            x_l = xmin
+#        x_u = self.scale_params["Punkte für Note 6"]
+#        pointslist = numpy.arange(x_l, x_u+step, step)
+#        if self.scale_params["Skalentyp"] == "standard":
+#            for x in pointslist:
+#                table.append((str(x),
+#                              str(standard_marking_scale(x,
+#                                                         self.scale_params["Punkte für Note 4"],
+#                                                         self.scale_params["Punkte für Note 6"], roundto=self.roundto))))
+#
+#        elif self.scale_params["Skalentyp"] == "triple":
+#            for x in pointslist:
+#                table.append((str(x),
+#                              str(triple_marking_scale(x,
+#                                                       self.scale_params["Punkte für Note 3"],
+#                                                       self.scale_params["Punkte für Note 4"],
+#                                                       self.scale_params["Punkte für Note 6"], roundto=step))))
+#
+#        print(tabulate(table, headers=[
+#              "Punkte", "Note"], tablefmt="orgtbl"))
 
     def plot_hist(self, title="default"):
         plt.figure(num=title, clear=True)
