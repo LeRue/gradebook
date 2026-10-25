@@ -587,7 +587,7 @@ class Leistungsnachweis:
 
     def print_info(self):
         print(tabulate(self.info, tablefmt="orgtbl",
-              headers=[self.info.index.name]+list(self.info.keys())))
+              headers=[self.info.index.name]+list(self.info.keys())), end="\n\n")
 
     def sum_points(self):
         t = self.points.drop(
@@ -625,7 +625,7 @@ class Leistungsnachweis:
         else:
             print("keine valide Option. Überprüfe die Schreibweise")
 
-    def print_gradescale(self, xmin=-1, cols_threshold=15, max_col_pairs=4):
+    def print_gradescale(self, xmin=-1, cols_threshold=15, max_col_pairs=4, fmt="orgtbl"):
         step = self.roundto
         grades_list = []
         table = []
@@ -675,11 +675,11 @@ class Leistungsnachweis:
 
             # Header anpassen
             headers = ["Punkte", "Note"] * num_columns
-            print(tabulate(output_table, headers=headers, tablefmt="orgtbl", missingval=""))
+            print(tabulate(output_table, headers=headers, tablefmt=fmt, missingval=""))
         else:
             # Fallback: nur ein Spaltenpaar oder warnen
             print(f"⚠️  {total_rows} Zeilen zu viel für {max_col_pairs} Spaltenpaare")
-            print(tabulate(table[:cols_threshold], headers=["Punkte", "Note"], tablefmt="orgtbl", col_space=4))
+            print(tabulate(table[:cols_threshold], headers=["Punkte", "Note"], tablefmt=fmt, col_space=4), end="\n\n")
 
 #    def print_gradescale(self, xmin=-1):
 #        step = self.roundto
@@ -727,7 +727,7 @@ class Leistungsnachweis:
                      ["Median der Punkte", round(
                          self.points["Summe"].agg("median"), 1)],
                      ["Standardabw. Punkte", round(self.points["Summe"].agg("std"), 1)]]
-            print(tabulate(table, headers=["", "Punkte"], tablefmt="orgtbl"))
+            print(tabulate(table, headers=["", "Punkte"], tablefmt="orgtbl"), end="\n\n")
 
         if option in ["grades", "all"]:
             try:
@@ -738,15 +738,15 @@ class Leistungsnachweis:
                          ["Median", round(
                              self.points["Note"].agg("median"), 1)],
                          ["Standardabw.", round(self.points["Note"].agg("std"), 1)]]
-                print(tabulate(table, headers=["", "Note"], tablefmt="orgtbl"))
+                print(tabulate(table, headers=["", "Note"], tablefmt="orgtbl"), end="\n\n")
             except:
                 print("Es ist ein Fehler aufgetreten. Zuerst Noten setzen.")
     def print_grades(self, sort = "Index"):
         t = self.points.drop("Name", axis=1)
         if sort == "Index":
-            print(tabulate(t.sort_index(), tablefmt = "orgtbl", headers= t.keys()))
+            print(tabulate(t.sort_index(), tablefmt = "orgtbl", headers= t.keys()), end="\n\n")
         else:
-            print(tabulate(t.sort_values(by=sort), tablefmt = "orgtbl", headers= t.keys()))
+            print(tabulate(t.sort_values(by=sort), tablefmt = "orgtbl", headers= t.keys()), end="\n\n")
 
 
 class EinfacheNote(Leistungsnachweis):
@@ -941,6 +941,18 @@ class Classtime(Leistungsnachweis):
 
 
 class MoodleTest(Leistungsnachweis):
+    ''' Moodle Class to import moodle tests'''
+
+    COLUMN_ALIASES = {
+        "Last name": "Nachname",
+        "First name": "Vorname",
+        "Email address": "E-Mail-Adresse",
+        "Status": "Status",
+        "Started": "Begonnen",
+        "Completed": "Beendet",
+        "Duration": "Dauer",
+        "Grade": "Bewertung",
+    }
     def __init__(self, path, title, shortname=None):
         super().__init__(path, title, shortname=shortname)
         self.path = path
@@ -955,6 +967,15 @@ class MoodleTest(Leistungsnachweis):
         self.info = self._extract_to_info_df()
         self.scale_params = {}
 
+    @staticmethod
+    def normalize_q_headers(s):
+        """'Q.1' -> 'F1', 'Q.10' -> 'F10', 'F1' -> 'F1'"""
+        m = re.fullmatch(r'[QF]\.?\s*(\d+)', s)
+        if m:
+            return "F" + m.group(1)
+        return s
+
+
     def _import_raw_data(self):
 
         df = pd.read_csv(
@@ -967,22 +988,28 @@ class MoodleTest(Leistungsnachweis):
         return df
 
     def _extract_to_points_df(self):
-
         df_points = self._data.copy()
-        # rename it to just "F1", "F2" and so on
 
+        # rename question headers to just "F1", "F2" (Q.1, Q.2,...) and so on
         def temp_name_replace(s):
+            ''' Replaces bachslashes in points headers of each question'''
             pos = s.rfind("/")
             if pos != -1:
                 return s[:pos].replace(" ", "")
             else:
                 return s
+        # rename to remove / and stuff behind
         df_points.rename(inplace=True, columns=temp_name_replace)
+        # rename if english export used
+        df_points.rename(inplace=True, columns=self.COLUMN_ALIASES)
         # extract only infos about points achieved in each exercise
-        df_points.drop(columns=["Status", "Begonnen",
-                                "Beendet", "Dauer", "Bewertung"], inplace=True)
+        UNUSED_META_COLUMNS = ["Status", "Begonnen",
+                                "Beendet", "Dauer", "Bewertung"]
+        df_points.drop(columns=UNUSED_META_COLUMNS, inplace=True)
         # rename E-Mail-Adresse
         df_points.rename(columns={"E-Mail-Adresse": "EMail"}, inplace=True)
+        # rename question columns to german convention F1, F2...
+        df_points.rename(columns=self.normalize_q_headers, inplace=True)
         # add a column with Name, Vorname (necessary?)
         df_points["Name"] = df_points["Nachname"] + ", " + df_points["Vorname"]
         # reset_index and start with 1
@@ -990,7 +1017,39 @@ class MoodleTest(Leistungsnachweis):
         df_points.index += 1
         return df_points
 
+
     def _extract_to_info_df(self):
+        # 1. Filter columns that look like questions: "Q. 1 /1.00", "F 3 /2.00"
+        # The regex requires the "/" to be present in the raw header.
+        p = re.compile(r'^[QF]\.?\s*\d+\s*/')
+        q_cols = [s for s in self._data.columns if p.match(str(s).strip())]
+
+        # 2. Extract the label part (before "/") and clean it (remove spaces)
+        # e.g., "Q. 1 /1.00" -> "Q. 1 " -> "Q.1"
+        raw_labels = [s.split("/")[0].replace(" ", "") for s in q_cols]
+
+        # 3. Normalize labels: "Q.1" -> "F1", "F1" -> "F1"
+        # This must match exactly what _extract_to_points_df produced.
+        labels = [self.normalize_q_headers(lbl) for lbl in raw_labels]
+
+        # 4. Extract max points (after "/")
+        points = [float(s.split("/")[1].replace(" ", "")) for s in q_cols]
+
+        # 5. Create DataFrame
+        df_info = pd.DataFrame({"max_Punkte": points}, index=labels)
+
+        # 6. Calculate average percentage achieved
+        # Now self.points[x] will work because x is "F1", "F2", etc.
+        df_info["Erreichte Punkte"] = [
+            round(self.points[x].mean() / df_info.loc[x]["max_Punkte"] * 100, 0)
+            for x in df_info.index
+        ]
+
+        return df_info
+
+
+    def _extract_to_info_df_backup(self):
+
         # extract meta infos from complete table
         p = re.compile(r'F\s[0-9]+\s')
         labels = [s.split("/")[0].replace(" ", "")
